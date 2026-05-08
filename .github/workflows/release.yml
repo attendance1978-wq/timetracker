@@ -1,0 +1,63 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build binaries
+        run: |
+          GOOS=linux GOARCH=arm64  go build -ldflags="-s -w" -o track-linux-arm64 .
+          GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="-s -w" -o track-linux-armv7 .
+          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o track-linux-amd64 .
+          GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o track-macos-arm64 .
+          GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o track-windows-amd64.exe .
+
+      - name: Build .deb packages
+        run: |
+          sudo apt-get install -y dpkg
+
+          for ARCH in aarch64 arm; do
+            BIN="track-linux-arm64"
+            [ "$ARCH" = "arm" ] && BIN="track-linux-armv7"
+            mkdir -p deb_${ARCH}/DEBIAN
+            mkdir -p deb_${ARCH}/data/data/com.termux/files/usr/bin
+            cat > deb_${ARCH}/DEBIAN/control << CTRL
+          Package: timetracker
+          Version: ${GITHUB_REF_NAME#v}
+          Architecture: ${ARCH}
+          Maintainer: ${{ github.repository_owner }}
+          Installed-Size: 1900
+          Homepage: https://github.com/${{ github.repository }}
+          Description: Fast CLI time tracker for the terminal
+           Track work sessions, view logs, and generate reports.
+          CTRL
+            cp $BIN deb_${ARCH}/data/data/com.termux/files/usr/bin/track
+            chmod 755 deb_${ARCH}/data/data/com.termux/files/usr/bin/track
+            dpkg-deb --build deb_${ARCH} timetracker_${GITHUB_REF_NAME#v}_${ARCH}.deb
+          done
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            track-linux-arm64
+            track-linux-armv7
+            track-linux-amd64
+            track-macos-arm64
+            track-windows-amd64.exe
+            timetracker_*_aarch64.deb
+            timetracker_*_arm.deb
